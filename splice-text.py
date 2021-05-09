@@ -16,6 +16,9 @@ import pytorch_lightning as pl
 # Transformer imports
 import transformers
 
+# Ranger (https://github.com/lessw2020/Ranger-Deep-Learning-Optimizer)
+import ranger
+
 
 
 class TokenizedTextDataModule(pl.LightningDataModule):
@@ -95,7 +98,7 @@ class MeaningfulBERT(pl.LightningModule):
          self,
          model_path:       str,
          num_labels:       int   = 2,
-         learning_rate:    float = 1e-5,
+         learning_rate:    float = 2e-5,
          adam_epsilon:     float = 1e-8,
          warmup_steps:     int   = 0,
          weight_decay:     float = 0.0,
@@ -130,7 +133,9 @@ class MeaningfulBERT(pl.LightningModule):
               "weight_decay": 0.0,
           },
       ]
-      optimizer = transformers.AdamW(optimizer_grouped_parameters,
+#      optimizer = transformers.AdamW(optimizer_grouped_parameters,
+#            lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+      optimizer = ranger.Ranger(optimizer_grouped_parameters,
             lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
 
       scheduler = transformers.get_constant_schedule(optimizer)
@@ -140,9 +145,6 @@ class MeaningfulBERT(pl.LightningModule):
           'frequency': 1
       }
       return [optimizer], [scheduler]
-
-
-
 
 
 if __name__ == '__main__':
