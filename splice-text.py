@@ -19,6 +19,9 @@ import transformers
 # Ranger (https://github.com/lessw2020/Ranger-Deep-Learning-Optimizer)
 import ranger
 
+#https://github.com/jettify/pytorch-optimizer#radam
+#from torch_optimizer import RAdam
+
 
 
 class TokenizedTextDataModule(pl.LightningDataModule):
@@ -43,6 +46,14 @@ class TokenizedTextDataModule(pl.LightningDataModule):
       return tokens
 
    def setup(self, stage):
+      '''Create a dataset from texts for a guessing task. The texts
+      consist of 4 types of texts: i) the original texts, ii) texts
+      where heads are swapped, i.e., they contain the beginning of a
+      text and the end of another at random, iii) and iv) 
+      head-to-tail swaps of i) and ii). Texts i) and iii) have label
+      0 and texts ii) and iv) have label 1, so the task is to
+      discover whhich texts contain information from two different
+      documents.'''
       # Read-in the tokens as torch long (original texts).
       data = list()
       with open(self.data_path) as f:
@@ -83,7 +94,9 @@ class TokenizedTextDataModule(pl.LightningDataModule):
       self.test_data = data[:len(data)//20]
 
    def collate(self, examples):
-      'Pad batch and return pair of tensors.'
+      '''Pad batch and return pair of tensors. This allows the
+      data to be kept in emory in a compact non-tensor format
+      and to serve a batch in tensor format for the GPUs.'''
       inputs = torch.nn.utils.rnn.pad_sequence(
             [x for x,y in examples],
             batch_first = True,
@@ -98,7 +111,7 @@ class MeaningfulBERT(pl.LightningModule):
          self,
          model_path:       str,
          num_labels:       int   = 2,
-         learning_rate:    float = 2e-5,
+         learning_rate:    float = 1e-4,
          adam_epsilon:     float = 1e-8,
          warmup_steps:     int   = 0,
          weight_decay:     float = 0.0,
@@ -133,11 +146,20 @@ class MeaningfulBERT(pl.LightningModule):
               "weight_decay": 0.0,
           },
       ]
-#      optimizer = transformers.AdamW(optimizer_grouped_parameters,
-#            lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+      # Original optimizer from Transformers. It works but needs warmup.
+      # optimizer = transformers.AdamW(optimizer_grouped_parameters,
+      #      lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+      # The RAdam optimizer works approximately as well as Ranger.
+      #optimizer = RAdam(optimizer_grouped_parameters,
+      #      lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+      # The Ranger optimizer is the combination of RAdam and Lookahead. It
+      # works well for this task. The best conditions seem to be learning
+      # rate 1e-4 w/ RAdam or Ranger, gradient accumulation of 2 batches.
       optimizer = ranger.Ranger(optimizer_grouped_parameters,
             lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
 
+      # The constant scheduler does nothing. Replace with another
+      # scheduler if required.
       scheduler = transformers.get_constant_schedule(optimizer)
       scheduler = {
           'scheduler': scheduler,
@@ -156,7 +178,7 @@ if __name__ == '__main__':
 
    # Prepare the data.
    text_data = TokenizedTextDataModule('./tokenizer-model/',
-         'encoded-abstracts-all.txt')
+         'head-10-percent.txt')
    text_data.setup('fit')
 
    # Set up the data loader.
@@ -166,6 +188,8 @@ if __name__ == '__main__':
          collate_fn = text_data.collate,
          num_workers = 8
    )
-   # Set up the trainer and do it.
-   trainer = pl.Trainer(gpus=4, accelerator='ddp', max_epochs=4)
+   # Set up the trainer and do it. Specify gradient accumulation over
+   # two batches, and of course make the best use of your GPUs and
+   # the DDP accelerator.
+   trainer = pl.Trainer(gpus=4, accelerator='ddp', accumulate_grad_batches=2, max_epochs=1)
    trainer.fit(model, dataloader)
